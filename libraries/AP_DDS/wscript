@@ -47,6 +47,66 @@ def configure(cfg):
     cfg.env.append_value('GIT_SUBMODULES', 'Micro-XRCE-DDS-Client')
     cfg.env.append_value('GIT_SUBMODULES', 'Micro-CDR')
 
+    # [YYIL] New. Vendored wolfSSL for DTLS(UDP)/TLS(Serial) on all boards, including SITL --
+    # the DTLS(UDP)/TLS(Serial) handshake path is verified end-to-end against SITL using this
+    # vendored build (run_ardupilot_dtls.sh <-> Agent-DDS-Router <-> FastDDS <-> GCS), and this
+    # dev box has no wolfssl-dev system package installed, so check_wolfssl()'s pkg-config lookup
+    # (see cxx_checks.py) can never resolve here anyway. Compiled here from source with
+    # WOLFSSL_USER_SETTINGS (see libraries/AP_DDS/user_settings.h) instead of wolfSSL's own
+    # configure/cmake, matching wolfSSL's documented bare-metal/RTOS integration pattern.
+    if True:
+        wolfssl_src = [
+            'modules/wolfssl/src/*.c',
+            'modules/wolfssl/wolfcrypt/src/*.c',
+        ]
+        # [YYIL] wolfSSL's own build (like several other single-compilation-unit-style C
+        # libraries) has some .c files meant to be pulled in via #include from another .c file,
+        # not compiled as their own standalone translation unit (ssl.c/asn.c #include all of
+        # these directly) -- compiling them again here too causes duplicate-symbol/missing-header
+        # errors (they don't get ssl.c/asn.c's own preceding #includes when compiled alone).
+        wolfssl_src_excl = [
+            'src/pk_rsa.c', 'src/pk_ec.c', 'src/ssl_misc.c', 'wolfcrypt/src/evp.c',
+            'src/ssl_crypto.c', 'src/ssl_certman.c', 'src/ssl_sess.c', 'src/ssl_api_cert.c',
+            'src/ssl_api_pk.c', 'src/ssl_bn.c', 'src/ssl_asn1.c', 'src/pk.c',
+            'wolfcrypt/src/evp_pk.c', 'src/ssl_sk.c', 'src/ssl_ech.c', 'src/ssl_api_dtls.c',
+            'src/ssl_api_crl_ocsp.c', 'src/ssl_api_ext.c', 'src/bio.c', 'src/x509.c',
+            'wolfcrypt/src/asn_orig.c',
+        ]
+        wolfssl_excl_paths = {str(cfg.srcnode.make_node('modules/wolfssl/' + p)) for p in wolfssl_src_excl}
+        for pattern in wolfssl_src:
+            s = cfg.srcnode.ant_glob(pattern, dir=False, src=True)
+            for x in s:
+                if str(x) not in wolfssl_excl_paths:
+                    cfg.env.AP_LIB_EXTRA_SOURCES['AP_DDS'].append(str(x))
+
+        cfg.env.INCLUDES += [str(cfg.srcnode.make_node('modules/wolfssl'))]
+        # user_settings.h lives in libraries/AP_DDS, not modules/wolfssl -- the wolfssl .c files
+        # being compiled need it on their include path too (quote-includes only check the
+        # including file's own directory before falling back to the include path list).
+        cfg.env.INCLUDES += [str(cfg.srcnode.make_node('libraries/AP_DDS'))]
+        cfg.env.DEFINES += ['WOLFSSL_USER_SETTINGS=1']
+
+        # wolfCrypt deliberately reads through under-aligned pointers in several files
+        # (readUnalignedWord32/64 and similar -- e.g. sha.c, sha256.c, aes.c, ecc.c...) as an
+        # intentional, tested embedded optimization; ArduPilot's ChibiOS build otherwise treats
+        # -Wcast-align as an error project-wide (see boards.py). Relax just this one warning for
+        # the AP_DDS library (this is the documented mechanism for exactly this situation, see
+        # ap_library.py's custom_flags_check()) rather than patching every affected vendored file
+        # or disabling -Werror=cast-align build-wide.
+        cfg.env.AP_LIB_EXTRA_CFLAGS['AP_DDS'] = ['-Wno-error=cast-align', '-Wno-error=cpp']
+
+        # wolfSSL's settings.h emits an informational #warning ("consider using harden options")
+        # that ChibiOS's own default CXXFLAGS already tolerate (-Wno-error=cpp is in boards.py's
+        # ChibiOS flag list) but SITL's don't -- AP_DDS's own .cpp files (AP_DDS_UDP.cpp,
+        # AP_DDS_wolfssl_ap_filesystem.cpp) that transitively include wolfssl headers need the
+        # same relaxation under CXXFLAGS, not just the plain-C wolfssl sources under CFLAGS above.
+        cfg.env.AP_LIB_EXTRA_CXXFLAGS['AP_DDS'] = ['-Wno-error=cast-align', '-Wno-error=cpp']
+        # [YYIL] Deliberately NOT auto-updated via GIT_SUBMODULES: modules/wolfssl/wolfssl/
+        # wolfcrypt/wc_port.h carries a local, uncommitted patch (the WOLFSSL_AP_FILESYSTEM
+        # backend) that a submodule auto-checkout would discard/refuse to apply over. Init/update
+        # this submodule manually (git submodule update --init modules/wolfssl) if it's ever
+        # missing, same as any other locally-patched vendored dependency in this tree.
+
 
 def build(bld):
     if bld.env.OPTIONS.get('enable_DDS', False) is False:

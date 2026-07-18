@@ -45,3 +45,6 @@
 [submodule "modules/littlefs"]
 	path = modules/littlefs
 	url = https://github.com/ArduPilot/littlefs.git
+[submodule "modules/wolfssl"]
+	path = modules/wolfssl
+	url = git@github.com:youngilyou/wolfssl.git

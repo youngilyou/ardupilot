@@ -838,7 +838,12 @@ class SITLBoard(Board):
         if not cfg.options.disable_networking and not 'clang' in cfg.env.COMPILER_CC:
             # lwip doesn't build with clang
             env.CXXFLAGS += ['-DAP_NETWORKING_ENABLED=1']
-        
+
+        if getattr(cfg.options, 'enable_DDS_DTLS', False):
+            if not cfg.check_wolfssl(env):
+                cfg.fatal("--enable-DDS-DTLS requires a wolfSSL install with DTLS+ECC (X.509) support "
+                          "(pkg-config 'wolfssl', built with --enable-dtls)")
+
         if cfg.options.ubsan or cfg.options.ubsan_abort:
             env.CXXFLAGS += [
                 "-fsanitize=undefined",

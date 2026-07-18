@@ -18,9 +18,9 @@
 #include <GCS_MAVLink/GCS.h>
 #include <AP_BattMonitor/AP_BattMonitor.h>
 #include <AP_AHRS/AP_AHRS.h>
-#if AP_DDS_ARM_SERVER_ENABLED
+#if AP_DDS_ARM_SERVER_ENABLED || AP_DDS_LOG_REQUEST_SUB_ENABLED
 #include <AP_Arming/AP_Arming.h>
-# endif // AP_DDS_ARM_SERVER_ENABLED
+# endif // AP_DDS_ARM_SERVER_ENABLED || AP_DDS_LOG_REQUEST_SUB_ENABLED
 #include <AP_Vehicle/AP_Vehicle.h>
 #include <AP_Common/AP_FWVersion.h>
 #include <AP_ExternalControl/AP_ExternalControl_config.h>
@@ -113,6 +113,20 @@ geometry_msgs_msg_TwistStamped AP_DDS_Client::rx_velocity_control_topic {};
 #if AP_DDS_GLOBAL_POS_CTRL_ENABLED
 ardupilot_msgs_msg_GlobalPosition AP_DDS_Client::rx_global_position_control_topic {};
 #endif // AP_DDS_GLOBAL_POS_CTRL_ENABLED
+#if AP_DDS_VEHICLE_DATA_SUB_ENABLED
+filemsg_msgs_msg_filemsg AP_DDS_Client::rx_vehicle_data_topic {};
+mavlink_message_t AP_DDS_Client::vehicle_data_accum_msg {};
+mavlink_status_t AP_DDS_Client::vehicle_data_accum_status {};
+mavlink_message_t AP_DDS_Client::vehicle_data_rx_msg {};
+mavlink_status_t AP_DDS_Client::vehicle_data_rx_status {};
+#endif // AP_DDS_VEHICLE_DATA_SUB_ENABLED
+#if AP_DDS_LOG_REQUEST_SUB_ENABLED
+filemsg_msgs_msg_filemsg AP_DDS_Client::rx_log_request_topic {};
+mavlink_message_t AP_DDS_Client::log_request_accum_msg {};
+mavlink_status_t AP_DDS_Client::log_request_accum_status {};
+mavlink_message_t AP_DDS_Client::log_request_rx_msg {};
+mavlink_status_t AP_DDS_Client::log_request_rx_status {};
+#endif // AP_DDS_LOG_REQUEST_SUB_ENABLED
 
 // Define the parameter server data members, which are static class scope.
 // If these are created on the stack, then the AP_DDS_Client::on_request
@@ -184,6 +198,33 @@ const AP_Param::GroupInfo AP_DDS_Client::var_info[] {
     // @RebootRequired: True
     // @User: Standard
     AP_GROUPINFO("_USE_NS", 7, AP_DDS_Client, use_ns, 0),
+
+#if AP_DDS_DTLS_ENABLED || AP_DDS_SERIAL_TLS_ENABLED
+    // @Param: _DTLS_ENABLE
+    // @DisplayName: DDS DTLS/TLS enable
+    // @Description: Enable wolfSSL encryption (X.509 mutual TLS, ECC) on whichever DDS transport
+    // is actually in use -- DTLS if UDP, TLS if Serial (see AP_DDS_Client::init_transport()).
+    // Certificates are loaded from AP_Filesystem (see AP_DDS_DTLS_x509.h and
+    // ap_cert_provisioner), not baked into the firmware image.
+    // @Values: 0:Disabled,1:Enabled
+    // @RebootRequired: True
+    // @User: Advanced
+    AP_GROUPINFO("_DTLS_ENABLE", 8, AP_DDS_Client, dtls_enable, 0),
+#endif
+
+#if AP_DDS_VEHICLE_DATA_PUB_ENABLED
+    // @Param: _MAV_MODE
+    // @DisplayName: DDS MAVLink transport mode
+    // @Description: Controls where MAVLINK_COMM_0's traffic actually goes. 0 (Normal): MAVLink
+    // only, exactly as without this feature -- no DDS involvement at all. 1 (DDS-only): MAVLink
+    // bytes are sent over DDS instead of serial0's own transport (the normal
+    // UART/UDP transmit for this channel is suppressed, so the same data is never duplicated on
+    // both). The MAVLink link itself is not disabled either way -- only which transport actually
+    // carries its bytes changes. Takes effect immediately, no reboot needed.
+    // @Values: 0:Normal (MAVLink only),1:DDS-only (MAVLink via DDS)
+    // @User: Standard
+    AP_GROUPINFO("_MAV_MODE", 9, AP_DDS_Client, mav_mode, 0),
+#endif // AP_DDS_VEHICLE_DATA_PUB_ENABLED
 
     AP_GROUPEND
 };
@@ -799,9 +840,17 @@ bool AP_DDS_Client::start(void)
         return true;
     }
 
+    // [YYIL] ECC/TLS handshake math is stack-heavy, more so without WOLFSSL_SMALL_STACK (see
+    // user_settings.h) -- give this thread extra headroom whenever DTLS/TLS is actually compiled
+    // in, since a stack overflow here would be a silent, hard-to-diagnose crash.
+#if AP_DDS_DTLS_ENABLED || AP_DDS_SERIAL_TLS_ENABLED
+    constexpr uint32_t dds_thread_stack_size = 16384;
+#else
+    constexpr uint32_t dds_thread_stack_size = 8192;
+#endif
     if (!hal.scheduler->thread_create(FUNCTOR_BIND_MEMBER(&AP_DDS_Client::main_loop, void),
                                       "DDS",
-                                      8192, AP_HAL::Scheduler::PRIORITY_IO, 1)) {
+                                      dds_thread_stack_size, AP_HAL::Scheduler::PRIORITY_IO, 1)) {
         GCS_SEND_TEXT(MAV_SEVERITY_ERROR, "%s Thread create failed", msg_prefix);
         return false;
     }
@@ -918,6 +967,63 @@ void AP_DDS_Client::on_topic(uxrSession* uxr_session, uxrObjectId object_id, uin
         break;
     }
 #endif // AP_DDS_CLOCK_SUB_ENABLED
+#if AP_DDS_VEHICLE_DATA_SUB_ENABLED
+    case topics[to_underlying(TopicIndex::VEHICLE_DATA_SUB)].dr_id.id: {
+        const bool success = filemsg_msgs_msg_filemsg_deserialize_topic(ub, &rx_vehicle_data_topic);
+        if (success == false) {
+            break;
+        }
+
+        // [YYIL] New. Mirror image of publish_vehicle_data(): feed this sample's raw bytes,
+        // one at a time, through a persistent (own, not any real UART channel's) MAVLink
+        // decoder -- a single filemsg sample may carry only part of a packet or exactly one
+        // packet, matching however the sending side's comm_send_buffer() chunked it, so the
+        // decoder must be stateful across samples, not reset per-sample. Once a full packet
+        // frames, dispatch it exactly as GCS_MAVLINK::_update_receive() would for a byte that
+        // arrived over a real UART, so arm/mode/command handling behaves identically -- see
+        // GCS_MAVLINK::packetReceived()/handle_message() in GCS_Common.cpp.
+        for (uint32_t i = 0; i < rx_vehicle_data_topic.data_size; i++) {
+            const uint8_t framing = mavlink_frame_char_buffer(&vehicle_data_accum_msg, &vehicle_data_accum_status,
+                                     rx_vehicle_data_topic.data[i], &vehicle_data_rx_msg, &vehicle_data_rx_status);
+            if (framing == MAVLINK_FRAMING_OK) {
+                GCS_MAVLINK *link = gcs().chan(MAVLINK_COMM_0);
+                if (link != nullptr) {
+                    link->handle_message(vehicle_data_rx_msg);
+                }
+            }
+        }
+        break;
+    }
+#endif // AP_DDS_VEHICLE_DATA_SUB_ENABLED
+#if AP_DDS_LOG_REQUEST_SUB_ENABLED
+    case topics[to_underlying(TopicIndex::LOG_REQUEST_SUB)].dr_id.id: {
+        const bool success = filemsg_msgs_msg_filemsg_deserialize_topic(ub, &rx_log_request_topic);
+        if (success == false) {
+            break;
+        }
+
+        // [YYIL] New. MngData's Bin (dataflash log) download requests must never be allowed to
+        // compete with real-time control traffic mid-flight -- drop the whole packet here,
+        // before it ever reaches handle_message(), whenever the vehicle is armed. GCS commands
+        // on VEHICLE_DATA_SUB are unaffected by this check -- only this separate topic is gated.
+        if (AP::arming().is_armed()) {
+            GCS_SEND_TEXT(MAV_SEVERITY_WARNING, "%s Bin request ignored while armed", msg_prefix);
+            break;
+        }
+
+        for (uint32_t i = 0; i < rx_log_request_topic.data_size; i++) {
+            const uint8_t framing = mavlink_frame_char_buffer(&log_request_accum_msg, &log_request_accum_status,
+                                     rx_log_request_topic.data[i], &log_request_rx_msg, &log_request_rx_status);
+            if (framing == MAVLINK_FRAMING_OK) {
+                GCS_MAVLINK *link = gcs().chan(MAVLINK_COMM_0);
+                if (link != nullptr) {
+                    link->handle_message(log_request_rx_msg);
+                }
+            }
+        }
+        break;
+    }
+#endif // AP_DDS_LOG_REQUEST_SUB_ENABLED
     }
 
 }
@@ -1867,10 +1973,81 @@ void AP_DDS_Client::write_status_topic()
 }
 #endif // AP_DDS_STATUS_PUB_ENABLED
 
+#if AP_DDS_VEHICLE_DATA_PUB_ENABLED
+// [YYIL] New. Mirrors one raw MAVLink byte chunk (as handed to comm_send_buffer() for
+// MAVLINK_COMM_0, see GCS_MAVLink.cpp) into a filemsg sample on /vehicle_data/from_dds. A single
+// logical MAVLink packet may reach here as 2-4 separate chunks (header, payload, CRC, signature --
+// see mavlink_helpers.h's _mav_finalize_message_chan_send()); each chunk becomes its own filemsg
+// sample here, and the receiving side reconstructs the packet by feeding each sample's bytes
+// through its own persistent byte-stream MAVLink decoder in the same order, exactly like a normal
+// UART receiver would -- the id/offset/step/eof fields carry no file-chunking meaning for this
+// raw byte-stream mirror (unlike the Log/Video filemsg usage), so they're left at simple defaults.
+void AP_DDS_Client::publish_vehicle_data(const uint8_t* data, uint8_t len)
+{
+    // [YYIL] New. Lock-free push -- no csem here at all. See VehicleDataChunk/
+    // vehicle_data_tx_queue's header comment: this is the producer side of a single-producer/
+    // single-consumer queue drained by drain_vehicle_data_tx_queue() from inside update() (DDS
+    // thread). Best-effort: if the queue is ever full (drained every ~1-2ms, so this would mean
+    // an unusually large burst), this chunk is silently dropped rather than blocking the caller --
+    // same tolerance as an already-lossy MAVLink transport.
+    VehicleDataChunk chunk{};
+    chunk.len = len;
+    memcpy(chunk.data, data, len);
+    vehicle_data_tx_queue.push(chunk);
+}
+
+void AP_DDS_Client::drain_vehicle_data_tx_queue()
+{
+    // [YYIL] New. Caller (update()) already holds csem for its whole body -- this only ever runs
+    // on the DDS thread, so write_vehicle_data_topic()'s own WITH_SEMAPHORE(csem) below is a
+    // same-thread reentrant relock (HALSITL::Semaphore is PTHREAD_MUTEX_RECURSIVE), not a wait.
+    VehicleDataChunk chunk;
+    while (vehicle_data_tx_queue.pop(chunk)) {
+        if (!connected) {
+            continue;
+        }
+        const uint64_t now_ns = AP_HAL::micros64() * 1000ULL;
+        vehicle_data_pub_topic.header.stamp.sec = static_cast<int32_t>(now_ns / 1000000000ULL);
+        vehicle_data_pub_topic.header.stamp.nanosec = static_cast<uint32_t>(now_ns % 1000000000ULL);
+        STRCPY(vehicle_data_pub_topic.header.frame_id, "DDS_LOG");
+
+        vehicle_data_pub_topic.id = vehicle_data_pub_sample_id++;
+        vehicle_data_pub_topic.offset = 0;
+        vehicle_data_pub_topic.length = chunk.len;
+        vehicle_data_pub_topic.step = 0;
+        vehicle_data_pub_topic.eof = true;
+        vehicle_data_pub_topic.data_size = chunk.len;
+        memcpy(vehicle_data_pub_topic.data, chunk.data, chunk.len);
+
+        write_vehicle_data_topic();
+    }
+}
+
+void AP_DDS_Client::write_vehicle_data_topic()
+{
+    WITH_SEMAPHORE(csem);
+    if (connected) {
+        ucdrBuffer ub {};
+        const uint32_t topic_size = filemsg_msgs_msg_filemsg_size_of_topic(&vehicle_data_pub_topic, 0);
+        const uint16_t stream_seq = uxr_prepare_output_stream(&session, reliable_out, topics[to_underlying(TopicIndex::VEHICLE_DATA_PUB)].dw_id, &ub, topic_size);
+        const bool success = filemsg_msgs_msg_filemsg_serialize_topic(&ub, &vehicle_data_pub_topic);
+        (void)stream_seq;
+        if (!success) {
+            // TODO sometimes serialization fails on bootup. Determine why.
+            // AP_HAL::panic("FATAL: DDS_Client failed to serialize");
+        }
+    }
+}
+#endif // AP_DDS_VEHICLE_DATA_PUB_ENABLED
+
 void AP_DDS_Client::update()
 {
     WITH_SEMAPHORE(csem);
     const auto cur_time_ms = AP_HAL::millis64();
+
+#if AP_DDS_VEHICLE_DATA_PUB_ENABLED
+    drain_vehicle_data_tx_queue();
+#endif // AP_DDS_VEHICLE_DATA_PUB_ENABLED
 
 #if AP_DDS_TIME_PUB_ENABLED
     if (cur_time_ms - last_time_time_ms > DELAY_TIME_TOPIC_MS) {

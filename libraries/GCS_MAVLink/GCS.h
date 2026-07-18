@@ -28,6 +28,7 @@
 #include <AP_AHRS/AP_AHRS_config.h>
 #include <AP_Arming/AP_Arming_config.h>
 #include <AP_Airspeed/AP_Airspeed_config.h>
+#include <AP_DDS/AP_DDS_config.h>
 #include <AP_Follow/AP_Follow.h>
 
 #include "ap_message.h"
@@ -179,6 +180,14 @@ public:
     friend class GCS_FTP;
 #endif
     friend class MAVLink_routing;
+#if AP_DDS_VEHICLE_DATA_SUB_ENABLED || AP_DDS_LOG_REQUEST_SUB_ENABLED
+    // [YYIL] New. Lets AP_DDS_Client dispatch a MAVLink message decoded from a DDS filemsg
+    // sample (/vehicle_data/to_dds GCS commands, or /vehicle_data/log_request MngData Bin
+    // requests while disarmed) into handle_message(), exactly as if it had arrived over a real
+    // UART on this channel -- see AP_DDS_Client::on_topic()'s VEHICLE_DATA_SUB/LOG_REQUEST_SUB
+    // cases.
+    friend class AP_DDS_Client;
+#endif
 
     GCS_MAVLINK(AP_HAL::UARTDriver &uart);
     virtual ~GCS_MAVLINK() {}

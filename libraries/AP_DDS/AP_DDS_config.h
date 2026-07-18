@@ -16,6 +16,33 @@
 #define AP_DDS_UDP_ENABLED AP_DDS_ENABLED && AP_NETWORKING_ENABLED
 #endif
 
+// wolfSSL DTLS (X.509 mutual TLS, ECC) for the DDS UDP transport, and (separately) wolfSSL TLS
+// for the DDS Serial transport (no Ethernet needed, so this is the only option on most real
+// boards -- see AP_DDS_Serial.cpp). Two independent detections:
+//   - HAVE_WOLFSSL: SITL only, via Tools/ardupilotwaf/cxx_checks.py:check_wolfssl's pkg-config
+//     lookup against the host's own wolfssl-dev package.
+//   - WOLFSSL_USER_SETTINGS: real (non-SITL) boards, wolfSSL built from the vendored
+//     modules/wolfssl submodule per libraries/AP_DDS/wscript + user_settings.h (ChibiOS porting
+//     hooks -- RNG/time/AP_Filesystem-backed cert loading -- in
+//     AP_DDS_wolfssl_ap_filesystem.cpp). No longer a SITL-only PoC.
+#ifndef AP_DDS_DTLS_ENABLED
+#if defined(HAVE_WOLFSSL) || defined(WOLFSSL_USER_SETTINGS)
+#define AP_DDS_DTLS_ENABLED AP_DDS_UDP_ENABLED
+#else
+#define AP_DDS_DTLS_ENABLED 0
+#endif
+#endif
+
+// Serial+TLS doesn't need AP_NETWORKING_ENABLED/Ethernet (unlike UDP+DTLS above) -- only needs
+// wolfSSL itself to be available.
+#ifndef AP_DDS_SERIAL_TLS_ENABLED
+#if defined(HAVE_WOLFSSL) || defined(WOLFSSL_USER_SETTINGS)
+#define AP_DDS_SERIAL_TLS_ENABLED AP_DDS_ENABLED
+#else
+#define AP_DDS_SERIAL_TLS_ENABLED 0
+#endif
+#endif
+
 #include <AP_VisualOdom/AP_VisualOdom_config.h>
 #ifndef AP_DDS_VISUALODOM_ENABLED
 #define AP_DDS_VISUALODOM_ENABLED HAL_VISUALODOM_ENABLED && AP_DDS_ENABLED
@@ -64,6 +91,25 @@
 
 #ifndef AP_DDS_DELAY_GEO_POSE_TOPIC_MS
 #define AP_DDS_DELAY_GEO_POSE_TOPIC_MS 33
+#endif
+
+// [YYIL] New. Raw MAVLink-over-filemsg passthrough on /vehicle_data/{from,to}_dds -- mirrors
+// GCS_MAVLink's own byte stream over DDS (see AP_DDS_Client::publish_vehicle_data(), hooked from
+// comm_send_buffer() in GCS_MAVLink.cpp) rather than the curated ROS2 sensor topics above.
+#ifndef AP_DDS_VEHICLE_DATA_PUB_ENABLED
+#define AP_DDS_VEHICLE_DATA_PUB_ENABLED AP_DDS_ENABLED
+#endif
+
+#ifndef AP_DDS_VEHICLE_DATA_SUB_ENABLED
+#define AP_DDS_VEHICLE_DATA_SUB_ENABLED AP_DDS_ENABLED
+#endif
+
+// [YYIL] New. Separate topic from VEHICLE_DATA_SUB, deliberately -- MngData's Bin (dataflash log)
+// download requests must never share a channel with real GCS commands, and must be dropped
+// outright while armed (see AP_DDS_Client::on_topic()'s LOG_REQUEST_SUB case) so a log-download
+// request can never compete with real-time control traffic mid-flight.
+#ifndef AP_DDS_LOG_REQUEST_SUB_ENABLED
+#define AP_DDS_LOG_REQUEST_SUB_ENABLED AP_DDS_ENABLED
 #endif
 
 #ifndef AP_DDS_LOCAL_POSE_PUB_ENABLED

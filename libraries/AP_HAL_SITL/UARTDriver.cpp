@@ -953,6 +953,13 @@ void UARTDriver::handle_writing_from_writebuffer_to_device()
 
 void UARTDriver::handle_reading_from_device_to_readbuffer()
 {
+    // _fd/_connected are also read and written by
+    // handle_writing_from_writebuffer_to_device() under write_mtx (it can
+    // run concurrently on another thread, e.g. via _flush() or a directly
+    // triggered write). Take the same lock here so the EOF-handling close()
+    // below can't race a concurrent use of _fd on another thread.
+    WITH_SEMAPHORE(write_mtx);
+
     if (!_connected) {
         _check_reconnect();
         return;

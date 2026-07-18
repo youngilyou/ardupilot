@@ -245,6 +245,28 @@ def check_libiio(cfg, env):
     return check_package(cfg, env, 'libiio')
 
 @conf
+def check_wolfssl(cfg, env):
+    '''look for a wolfSSL install (via pkg-config) built with DTLS + ECC (X.509) support'''
+    if not check_package(cfg, env, 'wolfssl'):
+        return False
+
+    if not cfg.check(compiler='cxx',
+            fragment='''
+            #include <wolfssl/options.h>
+            #include <wolfssl/ssl.h>
+            /* ECC is on by default in wolfSSL unless built with --disable-ecc */
+            #if !defined(WOLFSSL_DTLS) || !defined(HAVE_ECC)
+            #error "wolfSSL must be built with --enable-dtls (and without --disable-ecc)"
+            #endif
+            int main() { return 0; }''',
+            msg='Checking wolfSSL for DTLS + ECC (X.509) support',
+            mandatory=False,
+            use='WOLFSSL'):
+        return False
+
+    return True
+
+@conf
 def check_libdl(cfg, env):
     if cfg.env.STATIC_LINKING:
         # using loadable modules for a static build is not recommended

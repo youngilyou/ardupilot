@@ -112,6 +112,12 @@ public:
 
     static AP_Vehicle *get_singleton();
 
+#if AP_DDS_ENABLED
+    // [YYIL] New. Lets GCS_MAVLink.cpp's comm_send_buffer() reach the one DDS client instance
+    // to mirror outgoing MAVLink bytes over DDS -- see AP_DDS_Client::publish_vehicle_data().
+    AP_DDS_Client *get_DDS_Client() const { return dds_client; }
+#endif
+
     // setup() is called once during vehicle startup to initialise the
     // vehicle object and the objects it contains.  The
     // AP_HAL_MAIN_CALLBACKS pragma creates a main(...) function

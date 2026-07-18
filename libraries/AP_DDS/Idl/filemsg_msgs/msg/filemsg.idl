@@ -1,0 +1,22 @@
+// [YYIL] New file. Matches DDS-Router/thirdparty/Messages/fixed_idl/filemsg_msgs/msg/filemsg.idl
+// exactly (same wire type filemsg_msgs::msg::dds_::filemsg_) so this vehicle-side publisher/
+// subscriber interoperates with the existing filemsg-based tooling (RawDataBridge,
+// mavlink_raw_data_verify, ControlRoomDdsUdpBridge, MngData's ros2_filemsg_subscriber). Only
+// addition versus the canonical copy: "data" is bounded at 280 (MAVLink v2's maximum single-frame
+// size, header+payload+CRC+signature) since microxrceddsgen needs a concrete size to preallocate
+// for its C struct -- the wscript's default container size (8 bytes) is far too small.
+#include "std_msgs/msg/Header.idl"
+
+module filemsg_msgs {
+  module msg {
+    struct filemsg {
+      std_msgs::msg::Header header;
+      uint32 id;
+      uint32 offset;
+      uint32 length;
+      uint32 step;
+      boolean eof;
+      sequence<uint8, 280> data;
+    };
+  };
+};

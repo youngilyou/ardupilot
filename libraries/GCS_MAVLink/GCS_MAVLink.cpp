@@ -29,6 +29,11 @@ This provides some support code and variables for MAVLink enabled sketches
 
 #include <AP_Common/AP_Common.h>
 #include <AP_HAL/AP_HAL.h>
+#include <AP_DDS/AP_DDS_config.h>
+#if AP_DDS_VEHICLE_DATA_PUB_ENABLED
+#include <AP_Vehicle/AP_Vehicle.h>
+#include <AP_DDS/AP_DDS_Client.h>
+#endif
 
 extern const AP_HAL::HAL& hal;
 
@@ -146,6 +151,22 @@ void comm_send_buffer(mavlink_channel_t chan, const uint8_t *buf, uint8_t len)
         // an alternative protocol is active
         return;
     }
+#if AP_DDS_VEHICLE_DATA_PUB_ENABLED
+    // [YYIL] New. DDS_MAV_MODE is an exclusive switch, not an additive mirror: 0 (default) means
+    // this block does nothing at all (byte-for-byte identical to a build without this feature);
+    // 1 means MAVLINK_COMM_0's bytes go over DDS *instead of* serial0's own transport -- the
+    // normal UART/UDP write below is skipped so the same data is never sent twice. Scoped to
+    // serial0 only (the SITL's sole GCS link in this project, see DroneFC/run_ardupilot.sh)
+    // rather than every channel, so other links (telemetry radios etc.) are never touched.
+    if (chan == MAVLINK_COMM_0) {
+        AP_Vehicle *veh = AP_Vehicle::get_singleton();
+        AP_DDS_Client *dds = (veh != nullptr) ? veh->get_DDS_Client() : nullptr;
+        if (dds != nullptr && dds->mav_mode == 1) {
+            dds->publish_vehicle_data(buf, len);
+            return;
+        }
+    }
+#endif // AP_DDS_VEHICLE_DATA_PUB_ENABLED
     const size_t written = mavlink_comm_port[chan]->write(buf, len);
 #if CONFIG_HAL_BOARD == HAL_BOARD_SITL
     if (written < len && !mavlink_comm_port[chan]->is_write_locked()) {

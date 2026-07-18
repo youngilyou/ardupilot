@@ -214,7 +214,7 @@ bool GCS_MAVLINK::init(uint8_t instance)
     }
     // since tcdrain() and TCSADRAIN may not be implemented...
     hal.scheduler->delay(1);
-    
+
     _port->set_flow_control(old_flow_control);
 
     // now change back to desired baudrate

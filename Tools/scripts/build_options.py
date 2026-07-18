@@ -521,6 +521,7 @@ BUILD_OPTIONS = [
     Feature('CAN', 'CAN Logging', 'AP_CAN_LOGGING_ENABLED', 'Enable CAN logging support', 0, 'Logging'),
 
     Feature('DDS', 'DDS', 'AP_DDS_ENABLED', 'Enable MicroXRCE DDS support for ROS 2', 0, None),
+    Feature('DDS', 'DDS DTLS', 'AP_DDS_DTLS_ENABLED', 'Enable wolfSSL DTLS (X.509 mutual TLS) for the DDS UDP transport (SITL PoC)', 0, 'DDS'), # noqa
 
 ]
 

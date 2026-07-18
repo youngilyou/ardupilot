@@ -9,6 +9,9 @@
 #if AP_DDS_IMU_PUB_ENABLED
 #include "sensor_msgs/msg/Imu.h"
 #endif //AP_DDS_IMU_PUB_ENABLED
+#if AP_DDS_VEHICLE_DATA_PUB_ENABLED || AP_DDS_VEHICLE_DATA_SUB_ENABLED || AP_DDS_LOG_REQUEST_SUB_ENABLED
+#include "filemsg_msgs/msg/filemsg.h"
+#endif // AP_DDS_VEHICLE_DATA_PUB_ENABLED || AP_DDS_VEHICLE_DATA_SUB_ENABLED || AP_DDS_LOG_REQUEST_SUB_ENABLED
 
 #include "uxr/client/client.h"
 
@@ -74,6 +77,15 @@ enum class TopicIndex: uint8_t {
 #if AP_DDS_GLOBAL_POS_CTRL_ENABLED
     GLOBAL_POSITION_SUB,
 #endif // AP_DDS_GLOBAL_POS_CTRL_ENABLED
+#if AP_DDS_VEHICLE_DATA_PUB_ENABLED
+    VEHICLE_DATA_PUB,
+#endif // AP_DDS_VEHICLE_DATA_PUB_ENABLED
+#if AP_DDS_VEHICLE_DATA_SUB_ENABLED
+    VEHICLE_DATA_SUB,
+#endif // AP_DDS_VEHICLE_DATA_SUB_ENABLED
+#if AP_DDS_LOG_REQUEST_SUB_ENABLED
+    LOG_REQUEST_SUB,
+#endif // AP_DDS_LOG_REQUEST_SUB_ENABLED
 };
 
 static inline constexpr uint8_t to_underlying(const TopicIndex index)
@@ -426,4 +438,58 @@ constexpr struct AP_DDS_Client::Topic_table AP_DDS_Client::topics[] = {
         },
     },
 #endif // AP_DDS_GLOBAL_POS_CTRL_ENABLED
+#if AP_DDS_VEHICLE_DATA_PUB_ENABLED
+    {
+        .topic_id = to_underlying(TopicIndex::VEHICLE_DATA_PUB),
+        .pub_id = to_underlying(TopicIndex::VEHICLE_DATA_PUB),
+        .sub_id = to_underlying(TopicIndex::VEHICLE_DATA_PUB),
+        .dw_id = uxrObjectId{.id=to_underlying(TopicIndex::VEHICLE_DATA_PUB), .type=UXR_DATAWRITER_ID},
+        .dr_id = uxrObjectId{.id=to_underlying(TopicIndex::VEHICLE_DATA_PUB), .type=UXR_DATAREADER_ID},
+        .topic_rw = Topic_rw::DataWriter,
+        .topic_name = "/vehicle_data/from_dds",
+        .type_name = "filemsg_msgs::msg::dds_::filemsg_",
+        .qos = {
+            .durability = UXR_DURABILITY_VOLATILE,
+            .reliability = UXR_RELIABILITY_RELIABLE,
+            .history = UXR_HISTORY_KEEP_LAST,
+            .depth = 10,
+        },
+    },
+#endif // AP_DDS_VEHICLE_DATA_PUB_ENABLED
+#if AP_DDS_VEHICLE_DATA_SUB_ENABLED
+    {
+        .topic_id = to_underlying(TopicIndex::VEHICLE_DATA_SUB),
+        .pub_id = to_underlying(TopicIndex::VEHICLE_DATA_SUB),
+        .sub_id = to_underlying(TopicIndex::VEHICLE_DATA_SUB),
+        .dw_id = uxrObjectId{.id=to_underlying(TopicIndex::VEHICLE_DATA_SUB), .type=UXR_DATAWRITER_ID},
+        .dr_id = uxrObjectId{.id=to_underlying(TopicIndex::VEHICLE_DATA_SUB), .type=UXR_DATAREADER_ID},
+        .topic_rw = Topic_rw::DataReader,
+        .topic_name = "/vehicle_data/to_dds",
+        .type_name = "filemsg_msgs::msg::dds_::filemsg_",
+        .qos = {
+            .durability = UXR_DURABILITY_VOLATILE,
+            .reliability = UXR_RELIABILITY_RELIABLE,
+            .history = UXR_HISTORY_KEEP_LAST,
+            .depth = 10,
+        },
+    },
+#endif // AP_DDS_VEHICLE_DATA_SUB_ENABLED
+#if AP_DDS_LOG_REQUEST_SUB_ENABLED
+    {
+        .topic_id = to_underlying(TopicIndex::LOG_REQUEST_SUB),
+        .pub_id = to_underlying(TopicIndex::LOG_REQUEST_SUB),
+        .sub_id = to_underlying(TopicIndex::LOG_REQUEST_SUB),
+        .dw_id = uxrObjectId{.id=to_underlying(TopicIndex::LOG_REQUEST_SUB), .type=UXR_DATAWRITER_ID},
+        .dr_id = uxrObjectId{.id=to_underlying(TopicIndex::LOG_REQUEST_SUB), .type=UXR_DATAREADER_ID},
+        .topic_rw = Topic_rw::DataReader,
+        .topic_name = "/vehicle_data/log_request",
+        .type_name = "filemsg_msgs::msg::dds_::filemsg_",
+        .qos = {
+            .durability = UXR_DURABILITY_VOLATILE,
+            .reliability = UXR_RELIABILITY_RELIABLE,
+            .history = UXR_HISTORY_KEEP_LAST,
+            .depth = 10,
+        },
+    },
+#endif // AP_DDS_LOG_REQUEST_SUB_ENABLED
 };
