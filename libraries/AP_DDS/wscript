@@ -54,7 +54,7 @@ def configure(cfg):
     # (see cxx_checks.py) can never resolve here anyway. Compiled here from source with
     # WOLFSSL_USER_SETTINGS (see libraries/AP_DDS/user_settings.h) instead of wolfSSL's own
     # configure/cmake, matching wolfSSL's documented bare-metal/RTOS integration pattern.
-    if True:
+    if cfg.env.BOARD.lower() != 'sitl':
         wolfssl_src = [
             'modules/wolfssl/src/*.c',
             'modules/wolfssl/wolfcrypt/src/*.c',
