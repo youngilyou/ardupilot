@@ -269,12 +269,24 @@ private:
     // touches csem at all. ObjectBuffer's ByteBuffer backing uses atomic head/tail and is safe
     // for exactly one writer + one reader with no additional locking needed.
     struct VehicleDataChunk {
-        uint8_t len;
-        uint8_t data[255]; // len is uint8_t in publish_vehicle_data(), so this always fits
+        uint16_t len;
+        uint8_t data[MAVLINK_MAX_PACKET_LEN]; // matches filemsg.idl's sequence<uint8,280> bound --
+                                               // one complete MAVLink v2 frame incl. header/CRC/signature
     };
     ObjectBuffer<VehicleDataChunk> vehicle_data_tx_queue{8};
     //! @brief Drain vehicle_data_tx_queue and publish each chunk -- call only while csem is held
     void drain_vehicle_data_tx_queue();
+
+    // [YYIL] New. _mav_finalize_message_chan_send() (mavlink_helpers.h) calls comm_send_buffer()
+    // separately for a message's header, payload, CRC, and optional signature -- 3-4 calls per
+    // logical MAVLink message, not one -- so publish_vehicle_data() must accumulate across calls
+    // and only enqueue once a complete frame is known to be present. Mirrors the statefulness
+    // on_topic()'s VEHICLE_DATA_SUB handling already has via mavlink_frame_char_buffer(), just at
+    // whole-frame granularity since each publish_vehicle_data() call is already known to be a
+    // contiguous piece of exactly one frame (comm_send_buffer() is never called concurrently
+    // with itself for the same channel), never overlapping two frames.
+    uint8_t vehicle_data_tx_reassembly_buf[MAVLINK_MAX_PACKET_LEN];
+    uint16_t vehicle_data_tx_reassembly_len = 0;
 #endif // AP_DDS_VEHICLE_DATA_PUB_ENABLED
 
 #if AP_DDS_JOY_SUB_ENABLED
@@ -444,7 +456,7 @@ public:
 #if AP_DDS_VEHICLE_DATA_PUB_ENABLED
     //! @brief Mirror a raw MAVLink byte chunk (as sent on MAVLINK_COMM_0 via
     //  comm_send_buffer()) over DDS as a filemsg sample on /vehicle_data/from_dds.
-    void publish_vehicle_data(const uint8_t* data, uint8_t len);
+    void publish_vehicle_data(const uint8_t* data, uint16_t len);
 #endif // AP_DDS_VEHICLE_DATA_PUB_ENABLED
 
     //! @brief GCS message prefix

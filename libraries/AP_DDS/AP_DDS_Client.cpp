@@ -1974,16 +1974,77 @@ void AP_DDS_Client::write_status_topic()
 #endif // AP_DDS_STATUS_PUB_ENABLED
 
 #if AP_DDS_VEHICLE_DATA_PUB_ENABLED
-// [YYIL] New. Mirrors one raw MAVLink byte chunk (as handed to comm_send_buffer() for
-// MAVLINK_COMM_0, see GCS_MAVLink.cpp) into a filemsg sample on /vehicle_data/from_dds. A single
-// logical MAVLink packet may reach here as 2-4 separate chunks (header, payload, CRC, signature --
-// see mavlink_helpers.h's _mav_finalize_message_chan_send()); each chunk becomes its own filemsg
-// sample here, and the receiving side reconstructs the packet by feeding each sample's bytes
-// through its own persistent byte-stream MAVLink decoder in the same order, exactly like a normal
-// UART receiver would -- the id/offset/step/eof fields carry no file-chunking meaning for this
-// raw byte-stream mirror (unlike the Log/Video filemsg usage), so they're left at simple defaults.
-void AP_DDS_Client::publish_vehicle_data(const uint8_t* data, uint8_t len)
+// [YYIL] Returns true and sets frame_len to the total byte length (header+payload+CRC[+signature])
+// of the MAVLink frame starting at buf[0], once enough bytes have accumulated to know that (the
+// core header, which carries the payload length and -- for v2 -- the signing flag). Returns false
+// if not enough bytes have accumulated yet, or if buf[0] isn't a recognized magic byte. Verified
+// against mavlink_helpers.h's own _mav_finalize_message_chan_send() byte-count math
+// (header_len + 3 + length + signature_len).
+static bool mavlink_vehicle_data_frame_length(const uint8_t* buf, uint16_t accumulated, uint16_t &frame_len)
 {
+    if (accumulated < 1) {
+        return false;
+    }
+    if (buf[0] == MAVLINK_STX_MAVLINK1) {
+        if (accumulated < 2) {
+            return false;
+        }
+        frame_len = 1 + MAVLINK_CORE_HEADER_MAVLINK1_LEN + buf[1] + 2;
+        return true;
+    }
+    if (buf[0] == MAVLINK_STX) {
+        if (accumulated < 3) {
+            return false;
+        }
+        frame_len = MAVLINK_NUM_HEADER_BYTES + buf[1] + 2;
+        if ((buf[2] & MAVLINK_IFLAG_SIGNED) != 0) {
+            frame_len += MAVLINK_SIGNATURE_BLOCK_LEN;
+        }
+        return true;
+    }
+    return false;
+}
+
+// [YYIL] Mirrors the raw MAVLink byte stream written to MAVLINK_COMM_0 (via comm_send_buffer(),
+// see GCS_MAVLink.cpp) into filemsg samples on /vehicle_data/from_dds -- one complete MAVLink
+// frame per sample. _mav_finalize_message_chan_send() (mavlink_helpers.h) calls comm_send_buffer()
+// separately for a message's header, payload, CRC, and optional signature (3-4 calls per logical
+// message, not one), so this accumulates across calls and only enqueues once a full frame is
+// known to be present -- otherwise every message would reach the DDS side split into 3-4
+// incomplete, independently-unparseable filemsg samples (this crashed at least one real consumer,
+// DroneDataviewer's MAVLinkMessage.processBuffer(), with IndexOutOfRangeException -- 2026-07-20).
+void AP_DDS_Client::publish_vehicle_data(const uint8_t* data, uint16_t len)
+{
+    if (len == 0) {
+        return;
+    }
+    if (vehicle_data_tx_reassembly_len + len > sizeof(vehicle_data_tx_reassembly_buf)) {
+        // Would overflow the reassembly buffer (framing desync, or a single chunk larger than any
+        // real MAVLink frame) -- drop whatever was accumulating and resync from this call.
+        vehicle_data_tx_reassembly_len = 0;
+        if (len > sizeof(vehicle_data_tx_reassembly_buf)) {
+            return;
+        }
+    }
+    memcpy(&vehicle_data_tx_reassembly_buf[vehicle_data_tx_reassembly_len], data, len);
+    vehicle_data_tx_reassembly_len += len;
+
+    uint16_t frame_len;
+    if (!mavlink_vehicle_data_frame_length(vehicle_data_tx_reassembly_buf, vehicle_data_tx_reassembly_len, frame_len)) {
+        // Not a recognized magic byte at the front -- desynced, drop the accumulator and resync
+        // on the next call rather than accumulate indefinitely.
+        if (vehicle_data_tx_reassembly_len > 0 &&
+            vehicle_data_tx_reassembly_buf[0] != MAVLINK_STX &&
+            vehicle_data_tx_reassembly_buf[0] != MAVLINK_STX_MAVLINK1) {
+            vehicle_data_tx_reassembly_len = 0;
+        }
+        return;
+    }
+    if (vehicle_data_tx_reassembly_len < frame_len) {
+        // Header seen, but payload/CRC/signature piece(s) haven't arrived yet -- wait for them.
+        return;
+    }
+
     // [YYIL] New. Lock-free push -- no csem here at all. See VehicleDataChunk/
     // vehicle_data_tx_queue's header comment: this is the producer side of a single-producer/
     // single-consumer queue drained by drain_vehicle_data_tx_queue() from inside update() (DDS
@@ -1991,9 +2052,18 @@ void AP_DDS_Client::publish_vehicle_data(const uint8_t* data, uint8_t len)
     // an unusually large burst), this chunk is silently dropped rather than blocking the caller --
     // same tolerance as an already-lossy MAVLink transport.
     VehicleDataChunk chunk{};
-    chunk.len = len;
-    memcpy(chunk.data, data, len);
+    chunk.len = frame_len;
+    memcpy(chunk.data, vehicle_data_tx_reassembly_buf, frame_len);
     vehicle_data_tx_queue.push(chunk);
+
+    // _mav_finalize_message_chan_send() always finishes one frame's calls before starting the
+    // next, so there normally shouldn't be leftover bytes past frame_len -- but shift any down
+    // instead of discarding them, just in case, rather than lose the start of the next frame.
+    const uint16_t leftover = vehicle_data_tx_reassembly_len - frame_len;
+    if (leftover > 0) {
+        memmove(vehicle_data_tx_reassembly_buf, &vehicle_data_tx_reassembly_buf[frame_len], leftover);
+    }
+    vehicle_data_tx_reassembly_len = leftover;
 }
 
 void AP_DDS_Client::drain_vehicle_data_tx_queue()
