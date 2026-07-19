@@ -50,6 +50,48 @@ graph LR
   end
 ```
 
+## MAVLink-over-DDS Mirroring Mode (`DDS_MAV_MODE`)
+
+This fork adds an additional, simpler mode alongside the standard ROS 2 topic-based DDS
+interface described above: instead of translating individual vehicle values into their own
+typed ROS 2 topics, it mirrors the **raw MAVLink byte stream** (exactly what you'd see on a
+normal MAVLink connection) over two DDS topics. This is useful when you just want a DDS/DDS-Router
+based transport between a vehicle and a ground station, without implementing a per-message
+ROS 2 topic mapping on the receiving side.
+
+### Enabling it
+
+No special build flag is needed -- this ships as part of the same `AP_DDS` library documented
+above. Build and run SITL with DDS enabled as usual:
+
+```bash
+./waf configure --board sitl --enable-DDS
+./waf copter
+```
+
+Then set the following parameters (e.g. via a `.parm` defaults file passed to
+`--defaults`, or from a GCS parameter editor):
+
+| Parameter | Meaning | Typical value |
+|---|---|---|
+| `DDS_MAV_MODE` | `1` enables raw MAVLink-over-DDS mirroring, `0` (default) leaves the vehicle on the standard ROS 2 topic interface only | `1` |
+| `DDS_DOMAIN_ID` | DDS domain ID this vehicle participates in | project-specific |
+| `DDS_UDP_PORT` | UDP port used to reach the Micro XRCE-DDS Agent | `8888` |
+
+### Wire topics
+
+| Topic | Direction | Type |
+|---|---|---|
+| `/vehicle_data/from_dds` | Vehicle -> ground (outgoing MAVLink bytes) | `filemsg_msgs::msg::dds_::filemsg_` |
+| `/vehicle_data/to_dds` | Ground -> vehicle (incoming MAVLink bytes) | `filemsg_msgs::msg::dds_::filemsg_` |
+| `/vehicle_data/log_request` | Log-download request/response channel | `filemsg_msgs::msg::dds_::filemsg_` |
+
+Each `filemsg` sample carries one raw MAVLink frame's worth of bytes (`data`, `length`, plus
+`offset`/`step`/`eof` framing fields for any future multi-part use) -- a DDS subscriber that
+just re-emits `data` byte-for-byte over a plain UDP socket is enough to bridge this to any
+regular MAVLink-speaking ground station (Mission Planner, QGroundControl, etc.) with no further
+parsing required on the DDS side.
+
 ## Installation
 
 While DDS support in ArduPilot is mostly through git submodules,

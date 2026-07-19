@@ -25,6 +25,13 @@ It has been under development since 2010 by a diverse team of professional engin
 Our autopilot software is capable of controlling almost any vehicle system imaginable, from conventional airplanes, quad planes, multi-rotors, and helicopters to rovers, boats, balance bots, and even submarines.
 It is continually being expanded to provide support for new emerging vehicle types.
 
+> **This fork** adds a `DDS_MAV_MODE` parameter to `AP_DDS` that mirrors the raw MAVLink stream
+> over two DDS topics (`/vehicle_data/from_dds`, `/vehicle_data/to_dds`), for bridging a vehicle
+> to a DDS-based network (e.g. via [DDS-Router](https://github.com/eProsima/DDS-Router)) without
+> writing a per-message ROS 2 topic mapping. See
+> [`libraries/AP_DDS/README.md`](libraries/AP_DDS/README.md#mavlink-over-dds-mirroring-mode-dds_mav_mode)
+> for build/parameter/topic details.
+
 ## The ArduPilot project is made up of
 
 - ArduCopter: [code](https://github.com/ArduPilot/ardupilot/tree/master/ArduCopter), [wiki](https://ardupilot.org/copter/index.html)
