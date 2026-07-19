@@ -92,6 +92,25 @@ just re-emits `data` byte-for-byte over a plain UDP socket is enough to bridge t
 regular MAVLink-speaking ground station (Mission Planner, QGroundControl, etc.) with no further
 parsing required on the DDS side.
 
+### `DDS_MAV_MODE` vs. MAVROS
+
+| 축 | MAVROS | `DDS_MAV_MODE` |
+|---|---|---|
+| 메시지 커버리지 | MAVROS가 매핑해둔 메시지만 (수백 개지만 유한) | 채널에 실리는 모든 MAVLink 메시지 자동 포함, 신규 메시지 추가 시 코드 변경 불필요 |
+| 스키마/타입세이프티 | DDS 레벨에서 IDL로 타입 보장 | DDS는 바이트만 옮김 -- 파싱 책임이 전부 컨슈머(DroneDataviewer, MngData 등)로 이전 |
+| ROS2 의존성 | 풀 ROS2 스택 필수 (컴패니언 컴퓨터) | FC→Agent→DDS-Router→구독자 전 구간 ROS2 불필요 (MngData만 선택적으로 ROS2 훅 사용) |
+| 도메인 브리징 | 관심사 밖 (동일 도메인 가정) | DDS-Router가 도메인10(드론)/도메인0(관제) 분리를 1급 시민으로 처리 |
+| FC 측 오버헤드 | 없음(별도 프로세스가 companion에서 처리) | 매우 가벼움 -- 기존에 나가던 바이트를 memcpy해서 큐에 넣을 뿐 |
+| 유지보수 소재지 | 업스트림 MAVROS 매핑에 의존 (중앙집중, 검증됨) | 프로젝트가 직접 소유 -- 프레이밍 버그 같은 리스크를 자체 부담 |
+| 보안 | 표준 MAVLink 링크는 보통 무보호 | AP_DDS의 DTLS/mutual-TLS를 그대로 재사용 가능 |
+
+MAVROS는 "이미 ROS2 생태계 안에서 살 것"이 전제일 때 유리하다 -- rviz, nav2, MoveIt 등과
+바로 붙는다. 하지만 이 모드를 쓰는 실제 소비자들(Mission Planner류 GCS, 커스텀 뷰어)은
+전부 이미 MAVLink 파서를 가진 기존 데스크톱 앱이지 ROS 노드가 아니다. 그 앱들을 ROS
+노드로 새로 만들거나 MAVROS 매핑에 없는 메시지를 위해 업스트림에 기여하는 것보다, 원본
+MAVLink를 그대로 DDS로 실어 나르고 각 앱의 기존 파서를 재사용하는 쪽이 개발량 대비
+합리적이다.
+
 ## Installation
 
 While DDS support in ArduPilot is mostly through git submodules,
