@@ -94,6 +94,25 @@ parsing required on the DDS side.
 
 ### `DDS_MAV_MODE` vs. MAVROS
 
+| Axis | MAVROS | `DDS_MAV_MODE` |
+|---|---|---|
+| Message coverage | Only messages MAVROS has mapped (hundreds, but finite) | Every MAVLink message on the channel is included automatically; no code change needed for new message types |
+| Schema / type safety | Type-safe via DDS IDL | DDS just moves bytes -- all parsing responsibility shifts to the consumer (DroneDataviewer, MngData, etc.) |
+| ROS 2 dependency | Requires a full ROS 2 stack (companion computer) | No ROS 2 needed anywhere from FC→Agent→DDS-Router→subscriber (MngData optionally uses a ROS 2 hook) |
+| Domain bridging | Out of scope (assumes same domain) | DDS-Router treats domain 10 (vehicle) / domain 0 (ground) separation as a first-class concern |
+| FC-side overhead | None (a separate process on the companion computer handles it) | Very light -- just memcpy's the bytes it was already sending into a queue |
+| Where maintenance lives | Depends on upstream MAVROS mappings (centralized, well-tested) | Owned by the project itself -- bears its own risk, e.g. the framing bug found and fixed here |
+| Security | A plain MAVLink link is usually unprotected | Can directly reuse AP_DDS's DTLS/mutual-TLS |
+
+MAVROS is the better fit when you're already committed to living inside the ROS 2 ecosystem --
+it plugs straight into rviz, nav2, MoveIt, etc. But the actual consumers of this mode (Mission
+Planner-style GCS, custom viewers) are existing desktop apps with their own MAVLink parsers
+already, not ROS nodes. Rather than turning those apps into ROS nodes or upstreaming support
+for messages MAVROS hasn't mapped, it's more efficient to tunnel the raw MAVLink bytes over DDS
+and reuse each app's existing parser.
+
+### `DDS_MAV_MODE` vs. MAVROS (한국어)
+
 | 축 | MAVROS | `DDS_MAV_MODE` |
 |---|---|---|
 | 메시지 커버리지 | MAVROS가 매핑해둔 메시지만 (수백 개지만 유한) | 채널에 실리는 모든 MAVLink 메시지 자동 포함, 신규 메시지 추가 시 코드 변경 불필요 |
