@@ -287,6 +287,20 @@ private:
     // with itself for the same channel), never overlapping two frames.
     uint8_t vehicle_data_tx_reassembly_buf[MAVLINK_MAX_PACKET_LEN];
     uint16_t vehicle_data_tx_reassembly_len = 0;
+
+#if AP_DDS_LOG_DATA_PUB_ENABLED
+    // [YYIL] New. LOG_DATA/LOG_ENTRY frames (.bin log-download payload) are pulled out of
+    // publish_vehicle_data()'s reassembly and published here instead of vehicle_data_tx_queue --
+    // same VehicleDataChunk type/ObjectBuffer pattern, separate queue/topic/writer so only
+    // /vehicle_data/log_data's actual subscribers (MngData) see this data.
+    filemsg_msgs_msg_filemsg log_data_pub_topic;
+    uint32_t log_data_pub_sample_id;
+    //! @brief Serialize the current log_data_pub_topic and publish to the IO stream(s)
+    void write_log_data_topic();
+    ObjectBuffer<VehicleDataChunk> log_data_tx_queue{8};
+    //! @brief Drain log_data_tx_queue and publish each chunk -- call only while csem is held
+    void drain_log_data_tx_queue();
+#endif // AP_DDS_LOG_DATA_PUB_ENABLED
 #endif // AP_DDS_VEHICLE_DATA_PUB_ENABLED
 
 #if AP_DDS_JOY_SUB_ENABLED

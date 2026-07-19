@@ -112,6 +112,17 @@
 #define AP_DDS_LOG_REQUEST_SUB_ENABLED AP_DDS_ENABLED
 #endif
 
+// [YYIL] New. LOG_DATA/LOG_ENTRY responses (.bin log-download payload, generated in reply to
+// LOG_REQUEST_SUB commands) are pulled out of the vehicle_data reassembly path and published on
+// their own dedicated /vehicle_data/log_data topic instead of /vehicle_data/from_dds -- so only
+// whichever ControlCenter participant actually subscribes to log_data (MngData) receives .bin
+// bytes, while DroneDataviewer's bridge/DroneGateway2 (which only subscribe to from_dds) never
+// see them. Depends on the vehicle_data reassembly machinery (VehicleDataChunk, the tx reassembly
+// buffer), so it can't be enabled without AP_DDS_VEHICLE_DATA_PUB_ENABLED also being on.
+#ifndef AP_DDS_LOG_DATA_PUB_ENABLED
+#define AP_DDS_LOG_DATA_PUB_ENABLED AP_DDS_VEHICLE_DATA_PUB_ENABLED
+#endif
+
 #ifndef AP_DDS_LOCAL_POSE_PUB_ENABLED
 #define AP_DDS_LOCAL_POSE_PUB_ENABLED 1
 #endif

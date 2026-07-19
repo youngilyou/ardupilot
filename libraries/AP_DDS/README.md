@@ -84,13 +84,21 @@ Then set the following parameters (e.g. via a `.parm` defaults file passed to
 |---|---|---|
 | `/vehicle_data/from_dds` | Vehicle -> ground (outgoing MAVLink bytes) | `filemsg_msgs::msg::dds_::filemsg_` |
 | `/vehicle_data/to_dds` | Ground -> vehicle (incoming MAVLink bytes) | `filemsg_msgs::msg::dds_::filemsg_` |
-| `/vehicle_data/log_request` | Log-download request/response channel | `filemsg_msgs::msg::dds_::filemsg_` |
+| `/vehicle_data/log_request` | Ground -> vehicle, `LOG_REQUEST_*` commands only (dropped while armed) | `filemsg_msgs::msg::dds_::filemsg_` |
+| `/vehicle_data/log_data` | Vehicle -> ground, `LOG_DATA`/`LOG_ENTRY` responses only (`AP_DDS_LOG_DATA_PUB_ENABLED`) | `filemsg_msgs::msg::dds_::filemsg_` |
 
 Each `filemsg` sample carries one raw MAVLink frame's worth of bytes (`data`, `length`, plus
 `offset`/`step`/`eof` framing fields for any future multi-part use) -- a DDS subscriber that
 just re-emits `data` byte-for-byte over a plain UDP socket is enough to bridge this to any
 regular MAVLink-speaking ground station (Mission Planner, QGroundControl, etc.) with no further
 parsing required on the DDS side.
+
+`/vehicle_data/log_data` exists so a `.bin` dataflash log download (sent in reply to
+`/vehicle_data/log_request`) never mixes into `/vehicle_data/from_dds` -- `publish_vehicle_data()`
+peeks the reassembled frame's `msgid` and routes `LOG_DATA`/`LOG_ENTRY` onto this separate topic
+instead. That way whichever ground-side participant actually subscribes to it (e.g. MngData) is
+the only one that receives `.bin` payload bytes; participants that only subscribe to `from_dds`
+(a GCS bridge, a digital-twin visualizer, etc.) never see them on the wire.
 
 ### `DDS_MAV_MODE` vs. MAVROS
 

@@ -2054,7 +2054,29 @@ void AP_DDS_Client::publish_vehicle_data(const uint8_t* data, uint16_t len)
     VehicleDataChunk chunk{};
     chunk.len = frame_len;
     memcpy(chunk.data, vehicle_data_tx_reassembly_buf, frame_len);
-    vehicle_data_tx_queue.push(chunk);
+
+#if AP_DDS_LOG_DATA_PUB_ENABLED
+    // [YYIL] New. LOG_DATA/LOG_ENTRY (.bin log-download payload, sent in reply to a
+    // LOG_REQUEST_SUB command) is diverted onto its own queue/topic (/vehicle_data/log_data)
+    // instead of vehicle_data_tx_queue/from_dds -- see AP_DDS_config.h's AP_DDS_LOG_DATA_PUB_ENABLED
+    // comment for why. msgid is read directly out of the reassembled frame: v1's single msgid byte
+    // sits right after the 5-byte core header (buf[5]); v2's 24-bit msgid sits right after the
+    // 9-byte core header (buf[7..9], little-endian) -- same layout mavlink_helpers.h itself uses.
+    uint32_t msgid;
+    if (vehicle_data_tx_reassembly_buf[0] == MAVLINK_STX_MAVLINK1) {
+        msgid = vehicle_data_tx_reassembly_buf[5];
+    } else {
+        msgid = static_cast<uint32_t>(vehicle_data_tx_reassembly_buf[7]) |
+                (static_cast<uint32_t>(vehicle_data_tx_reassembly_buf[8]) << 8) |
+                (static_cast<uint32_t>(vehicle_data_tx_reassembly_buf[9]) << 16);
+    }
+    if (msgid == MAVLINK_MSG_ID_LOG_DATA || msgid == MAVLINK_MSG_ID_LOG_ENTRY) {
+        log_data_tx_queue.push(chunk);
+    } else
+#endif // AP_DDS_LOG_DATA_PUB_ENABLED
+    {
+        vehicle_data_tx_queue.push(chunk);
+    }
 
     // _mav_finalize_message_chan_send() always finishes one frame's calls before starting the
     // next, so there normally shouldn't be leftover bytes past frame_len -- but shift any down
@@ -2108,6 +2130,50 @@ void AP_DDS_Client::write_vehicle_data_topic()
         }
     }
 }
+
+#if AP_DDS_LOG_DATA_PUB_ENABLED
+void AP_DDS_Client::drain_log_data_tx_queue()
+{
+    // [YYIL] New. Same reasoning as drain_vehicle_data_tx_queue() -- caller (update()) already
+    // holds csem, this only runs on the DDS thread.
+    VehicleDataChunk chunk;
+    while (log_data_tx_queue.pop(chunk)) {
+        if (!connected) {
+            continue;
+        }
+        const uint64_t now_ns = AP_HAL::micros64() * 1000ULL;
+        log_data_pub_topic.header.stamp.sec = static_cast<int32_t>(now_ns / 1000000000ULL);
+        log_data_pub_topic.header.stamp.nanosec = static_cast<uint32_t>(now_ns % 1000000000ULL);
+        STRCPY(log_data_pub_topic.header.frame_id, "DDS_LOG_DATA");
+
+        log_data_pub_topic.id = log_data_pub_sample_id++;
+        log_data_pub_topic.offset = 0;
+        log_data_pub_topic.length = chunk.len;
+        log_data_pub_topic.step = 0;
+        log_data_pub_topic.eof = true;
+        log_data_pub_topic.data_size = chunk.len;
+        memcpy(log_data_pub_topic.data, chunk.data, chunk.len);
+
+        write_log_data_topic();
+    }
+}
+
+void AP_DDS_Client::write_log_data_topic()
+{
+    WITH_SEMAPHORE(csem);
+    if (connected) {
+        ucdrBuffer ub {};
+        const uint32_t topic_size = filemsg_msgs_msg_filemsg_size_of_topic(&log_data_pub_topic, 0);
+        const uint16_t stream_seq = uxr_prepare_output_stream(&session, reliable_out, topics[to_underlying(TopicIndex::LOG_DATA_PUB)].dw_id, &ub, topic_size);
+        const bool success = filemsg_msgs_msg_filemsg_serialize_topic(&ub, &log_data_pub_topic);
+        (void)stream_seq;
+        if (!success) {
+            // TODO sometimes serialization fails on bootup. Determine why.
+            // AP_HAL::panic("FATAL: DDS_Client failed to serialize");
+        }
+    }
+}
+#endif // AP_DDS_LOG_DATA_PUB_ENABLED
 #endif // AP_DDS_VEHICLE_DATA_PUB_ENABLED
 
 void AP_DDS_Client::update()
@@ -2118,6 +2184,9 @@ void AP_DDS_Client::update()
 #if AP_DDS_VEHICLE_DATA_PUB_ENABLED
     drain_vehicle_data_tx_queue();
 #endif // AP_DDS_VEHICLE_DATA_PUB_ENABLED
+#if AP_DDS_LOG_DATA_PUB_ENABLED
+    drain_log_data_tx_queue();
+#endif // AP_DDS_LOG_DATA_PUB_ENABLED
 
 #if AP_DDS_TIME_PUB_ENABLED
     if (cur_time_ms - last_time_time_ms > DELAY_TIME_TOPIC_MS) {
