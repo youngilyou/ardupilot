@@ -106,7 +106,7 @@ the only one that receives `.bin` payload bytes; participants that only subscrib
 |---|---|---|
 | Message coverage | Only messages MAVROS has mapped (hundreds, but finite) | Every MAVLink message on the channel is included automatically; no code change needed for new message types |
 | Schema / type safety | Type-safe via DDS IDL | DDS just moves bytes -- all parsing responsibility shifts to the consumer (GCS, etc.) |
-| ROS 2 dependency | Requires a full ROS 2 stack (companion computer) | No ROS 2 needed anywhere from FC→Agent→DDS-Router→subscriber (MngData optionally uses a ROS 2 hook) |
+| ROS 2 dependency | Requires a full ROS 2 stack (companion computer) | No ROS 2 needed anywhere from FC→Agent→DDS-Router→subscriber |
 | Domain bridging | Out of scope (assumes same domain) | DDS-Router treats domain 10 (vehicle) / domain 0 (ground) separation as a first-class concern |
 | FC-side overhead | None (a separate process on the companion computer handles it) | Very light -- just memcpy's the bytes it was already sending into a queue |
 | Where maintenance lives | Depends on upstream MAVROS mappings (centralized, well-tested) | Owned by the project itself -- bears its own risk, e.g. the framing bug found and fixed here |
@@ -125,7 +125,7 @@ and reuse each app's existing parser.
 |---|---|---|
 | 메시지 커버리지 | MAVROS가 매핑해둔 메시지만 (수백 개지만 유한) | 채널에 실리는 모든 MAVLink 메시지 자동 포함, 신규 메시지 추가 시 코드 변경 불필요 |
 | 스키마/타입세이프티 | DDS 레벨에서 IDL로 타입 보장 | DDS는 바이트만 옮김 -- 파싱 책임이 전부 컨슈머(GCS 등)로 이전 |
-| ROS2 의존성 | 풀 ROS2 스택 필수 (컴패니언 컴퓨터) | FC→Agent→DDS-Router→구독자 전 구간 ROS2 불필요 (MngData만 선택적으로 ROS2 훅 사용) |
+| ROS2 의존성 | 풀 ROS2 스택 필수 (컴패니언 컴퓨터) | FC→Agent→DDS-Router→구독자 전 구간 ROS2 불필요 |
 | 도메인 브리징 | 관심사 밖 (동일 도메인 가정) | DDS-Router가 도메인10(드론)/도메인0(관제) 분리를 1급 시민으로 처리 |
 | FC 측 오버헤드 | 없음(별도 프로세스가 companion에서 처리) | 매우 가벼움 -- 기존에 나가던 바이트를 memcpy해서 큐에 넣을 뿐 |
 | 유지보수 소재지 | 업스트림 MAVROS 매핑에 의존 (중앙집중, 검증됨) | 프로젝트가 직접 소유 -- 프레이밍 버그 같은 리스크를 자체 부담 |
