@@ -34,6 +34,20 @@ TARGET="${1:-copter}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/../.."
 
+# Auto-add the known install locations if not already set, so this is a genuine one-click
+# script rather than requiring the caller to export PATH/PKG_CONFIG_PATH first every time.
+if ! command -v microxrceddsgen >/dev/null 2>&1; then
+    for candidate in "$HOME/Micro-XRCE-DDS-Gen/scripts" "$HOME/tools/Micro-XRCE-DDS-Gen/scripts"; do
+        if [ -x "${candidate}/microxrceddsgen" ]; then
+            export PATH="${candidate}:$PATH"
+            break
+        fi
+    done
+fi
+if ! pkg-config --exists wolfssl 2>/dev/null && [ -f "$HOME/.local/lib/pkgconfig/wolfssl.pc" ]; then
+    export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+fi
+
 if ! command -v microxrceddsgen >/dev/null 2>&1; then
     echo "ERROR: microxrceddsgen not found on PATH." >&2
     echo "See the header of this script for how to build ArduPilot's fork." >&2
